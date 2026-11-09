@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YouTube Chat Assistant</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body>
+  <div class="scene" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h2>⚙️ Video Setup</h2>
+
+      <label for="url">YouTube link</label>
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." />
+
+      <label for="language">Transcript language</label>
+      <input id="language" type="text" list="languageList" value="en"
+             placeholder="e.g. en, hi, Hindi, French" autocomplete="off" />
+      <datalist id="languageList">
+        <option value="en">English</option>
+        <option value="hi">Hindi</option>
+        <option value="fr">French</option>
+        <option value="es">Spanish</option>
+        <option value="de">German</option>
+        <option value="pt">Portuguese</option>
+        <option value="ja">Japanese</option>
+        <option value="ko">Korean</option>
+        <option value="ar">Arabic</option>
+        <option value="ru">Russian</option>
+      </datalist>
+
+      <button id="processBtn" class="btn primary">Process Video</button>
+      <p id="status" class="status"></p>
+
+      <div id="videoInfo" class="video-info hidden">
+        <hr />
+        <p>Video ID: <code id="videoId"></code></p>
+        <button id="clearBtn" class="btn">Clear chat</button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header>
+        <h1>🎬 YouTube Chat Assistant</h1>
+        <p class="caption">Ask questions about any YouTube video using its transcript.</p>
+      </header>
+
+      <div id="placeholder" class="info-box" data-tilt>
+        👈 Paste a YouTube link in the sidebar and click <strong>Process Video</strong> to begin.
+      </div>
+
+      <section id="chatSection" class="hidden">
+        <div class="video-wrap" data-tilt>
+          <iframe id="player" allowfullscreen
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>
+        </div>
+
+        <button id="summarizeBtn" class="btn">📝 Summarize this video</button>
+
+        <div id="messages" class="messages"></div>
+
+        <div class="input-row">
+          <input id="question" type="text" placeholder="Ask something about the video..." />
+          <button id="sendBtn" class="btn primary">Send</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let sessionId = sessionStorage.getItem("yt_session") || crypto.randomUUID();
+    sessionStorage.setItem("yt_session", sessionId);
+    let busy = false;
+
+    function setStatus(text, isError = false) {
+      const el = $("status");
+      el.textContent = text;
+      el.className = "status" + (isError ? " error" : "");
+    }
+
+    function renderMarkdown(text) {
+      if (window.marked && window.DOMPurify) {
+        return DOMPurify.sanitize(marked.parse(text));
+      }
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML.replace(/\n/g, "<br>");
+    }
+
+    function addMessage(role, content, sources) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg " + role;
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      if (role === "assistant") bubble.innerHTML = renderMarkdown(content);
+      else bubble.textContent = content;
+      wrap.appendChild(bubble);
+
+      if (sources && sources.length) {
+        const details = document.createElement("details");
+        details.className = "sources";
+        const summary = document.createElement("summary");
+        summary.textContent = "Sources";
+        details.appendChild(summary);
+        sources.forEach((s, i) => {
+          const p = document.createElement("p");
+          const b = document.createElement("strong");
+          b.textContent = "Chunk " + (i + 1) + ": ";
+          p.appendChild(b);
+          p.appendChild(document.createTextNode(s));
+          details.appendChild(p);
+        });
+        wrap.appendChild(details);
+      }
+
+      $("messages").appendChild(wrap);
+      wrap.scrollIntoView({ behavior: "smooth", block: "end" });
+      return wrap;
+    }
+
+    async function postJSON(url, body) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      return data;
+    }
+
+    async function processVideo() {
+      const url = $("url").value.trim();
+      if (!url) return setStatus("Please enter a YouTube link.", true);
+
+      $("processBtn").disabled = true;
+      setStatus("Fetching transcript and building index...");
+      try {
+        const data = await postJSON("/api/process", {
+          url, language: $("language").value, session_id: sessionId,
+        });
+        sessionId = data.session_id;
+        sessionStorage.setItem("yt_session", sessionId);
+
+        $("player").src = "https://www.youtube.com/embed/" + data.video_id;
+        $("videoId").textContent = data.video_id;
+        $("messages").innerHTML = "";
+
+        $("placeholder").classList.add("hidden");
+        $("chatSection").classList.remove("hidden");
+        $("videoInfo").classList.remove("hidden");
+        setStatus("Video processed!");
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        $("processBtn").disabled = false;
+      }
+    }
+
+    async function ask(question) {
+      question = question.trim();
+      if (!question || busy) return;
+      busy = true;
+      $("sendBtn").disabled = true;
+      $("question").value = "";
+
+      addMessage("user", question);
+      const thinking = addMessage("assistant", "Thinking");
+      thinking.classList.add("thinking");
+
+      try {
+        const data = await postJSON("/api/ask", { session_id: sessionId, question });
+        thinking.remove();
+        addMessage("assistant", data.answer, data.sources);
+      } catch (err) {
+        thinking.remove();
+        const el = addMessage("assistant", err.message);
+        el.classList.add("error");
+      } finally {
+        busy = false;
+        $("sendBtn").disabled = false;
+        $("question").focus();
+      }
+    }
+
+    // 3D tilt + background parallax that follow the cursor
+    (function () {
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches || matchMedia("(pointer: coarse)").matches) return;
+      const tilts = document.querySelectorAll("[data-tilt]");
+      const root = document.documentElement;
+      let x = innerWidth / 2, y = innerHeight / 2, queued = false;
+      const clamp = (v) => Math.max(-1, Math.min(1, v));
+      function frame() {
+        queued = false;
+        root.style.setProperty("--mx", clamp((x - innerWidth / 2) / (innerWidth / 2)).toFixed(3));
+        root.style.setProperty("--my", clamp((y - innerHeight / 2) / (innerHeight / 2)).toFixed(3));
+        tilts.forEach((el) => {
+          if (el.offsetParent === null) return;
+          const r = el.getBoundingClientRect();
+          const dx = clamp((x - (r.left + r.width / 2)) / (innerWidth / 2));
+          const dy = clamp((y - (r.top + r.height / 2)) / (innerHeight / 2));
+          el.style.transform = `perspective(1000px) rotateX(${(-dy * 5).toFixed(2)}deg) rotateY(${(dx * 7).toFixed(2)}deg)`;
+        });
+      }
+      addEventListener("mousemove", (e) => {
+        x = e.clientX; y = e.clientY;
+        if (!queued) { queued = true; requestAnimationFrame(frame); }
+      });
+    })();
+
+    $("processBtn").addEventListener("click", processVideo);
+    $("url").addEventListener("keydown", (e) => { if (e.key === "Enter") processVideo(); });
+    $("sendBtn").addEventListener("click", () => ask($("question").value));
+    $("question").addEventListener("keydown", (e) => { if (e.key === "Enter") ask($("question").value); });
+    $("summarizeBtn").addEventListener("click", () =>
+      ask("Summarize this video in 5-7 short bullet points."));
+    $("clearBtn").addEventListener("click", () => { $("messages").innerHTML = ""; });
+  </script>
+</body>
+</html>

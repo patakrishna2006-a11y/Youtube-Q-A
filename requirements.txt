@@ -14,3 +14,6 @@ chromadb==0.5.5
 
 # Utilities
 python-dotenv==1.0.1
+
+# Flask
+flask==
