@@ -63,7 +63,7 @@ A **RAG (Retrieval-Augmented Generation)** web application that lets you chat wi
 |------|---------|---------|
 | **Python** | 3.10+ | [python.org](https://python.org) |
 | **Ollama** | Latest | [ollama.com/download](https://ollama.com/download) |
-| **NVIDIA API Key** | – | [NVIDIA NGC](https://org.ngc.nvidia.com/setup/api-key) |
+| **NVIDIA API Key** | Website | [NVIDIA NIM](https://build.nvidia.com/) |
 
 ---
 
@@ -116,7 +116,7 @@ ollama pull embeddinggemma-2:latest
 python main.py
 ```
 
-Open **http://localhost:5000** in your browser.
+Open **http://localhost:0000** in your browser.
 
 ---
 
